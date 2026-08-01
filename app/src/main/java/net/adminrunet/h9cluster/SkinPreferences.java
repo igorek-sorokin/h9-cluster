@@ -2,9 +2,6 @@ package net.adminrunet.h9cluster;
 
 import net.adminrunet.h9cluster.skins.SkinRegistry;
 
-import android.content.Context;
-import android.content.SharedPreferences;
-
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
