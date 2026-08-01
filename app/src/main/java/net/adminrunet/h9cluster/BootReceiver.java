@@ -18,6 +18,9 @@ public final class BootReceiver extends BroadcastReceiver {
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             return;
         }
+        if (!SkinPreferences.isAutostartEnabled(context)) {
+            return;
+        }
 
         final Context applicationContext = context.getApplicationContext();
         final PendingResult pendingResult = goAsync();

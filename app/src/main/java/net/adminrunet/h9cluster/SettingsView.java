@@ -301,11 +301,7 @@ public final class SettingsView extends View {
             SkinPreferences.setAutostartEnabled(getContext(), enabled);
             status = enabled
                     ? "Автозапуск включён"
-                    : "Автозапуск выключен — панель сама не поднимется";
-            if (!enabled) {
-                // Drop pending ACC-resume work; manual Save still works.
-                ClusterPowerController.clearSuspendForUserLaunch();
-            }
+                    : "Автозапуск выключен — без фона и без самозапуска";
             invalidate();
             return true;
         }
@@ -459,7 +455,7 @@ public final class SettingsView extends View {
 
     private String defaultHint(boolean factorySelected) {
         if (!SkinPreferences.isAutostartEnabled(getContext())) {
-            return "Без автозапуска: панель только после «Сохранить и запустить»";
+            return "Без автозапуска: не в фоне; панель только вручную";
         }
         if (factorySelected) {
             return "При автозапуске кастомная панель не будет перекрывать дисплей 2";

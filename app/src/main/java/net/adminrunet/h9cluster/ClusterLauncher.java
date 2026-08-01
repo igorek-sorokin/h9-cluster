@@ -96,6 +96,7 @@ public final class ClusterLauncher {
         options.setLaunchDisplayId(targetDisplayId);
         try {
             context.startActivity(intent, options.toBundle());
+            ClusterPowerController.ensureRunning();
             return true;
         } catch (RuntimeException error) {
             Log.e(TAG, "Cannot start cluster on Display " + targetDisplayId, error);

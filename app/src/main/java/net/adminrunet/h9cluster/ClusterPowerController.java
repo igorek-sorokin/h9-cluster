@@ -188,6 +188,30 @@ final class ClusterPowerController {
         }
     }
 
+    /** Start power watch when overlay is launched manually with autostart off. */
+    static void ensureRunning() {
+        ClusterPowerController controller = instance;
+        if (controller != null) {
+            controller.start();
+        }
+    }
+
+    /** Apply autostart preference: arm background watch or fully idle. */
+    static void applyAutostartPreference(Context context) {
+        ClusterPowerController controller = instance;
+        if (controller == null) {
+            return;
+        }
+        if (SkinPreferences.isAutostartEnabled(context)) {
+            controller.start();
+            return;
+        }
+        controller.stopResumePings();
+        if (!PreviewActivity.isShowing()) {
+            controller.stop();
+        }
+    }
+
     static boolean isSuspendedByPower() {
         ClusterPowerController controller = instance;
         return controller != null && controller.suspendedByPower;
@@ -220,6 +244,29 @@ final class ClusterPowerController {
         registered = true;
         evaluatePowerSignals("initial");
         Log.i(TAG, "Cluster power controller armed");
+    }
+
+    void stop() {
+        cancelPendingWork();
+        stopResumePings();
+        suspendedByPower = false;
+        if (!registered) {
+            return;
+        }
+        if (displayManager != null) {
+            displayManager.unregisterDisplayListener(displayListener);
+        }
+        try {
+            appContext.unregisterReceiver(powerReceiver);
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            appContext.getContentResolver().unregisterContentObserver(brightnessObserver);
+        } catch (RuntimeException ignored) {
+        }
+        handler.removeCallbacks(pollRunnable);
+        registered = false;
+        Log.i(TAG, "Cluster power controller stopped — no background watch");
     }
 
     private void evaluatePowerSignals(String reason) {
@@ -274,6 +321,11 @@ final class ClusterPowerController {
         Log.i(TAG, "Switching to factory cluster (" + reason + ")");
         PreviewActivity.forceRemoveOverlay(appContext);
         VehicleAwakeTracker.get().reset();
+        if (!SkinPreferences.isAutostartEnabled(appContext)) {
+            // No auto-resume and no background listeners when the flag is off.
+            stop();
+            return;
+        }
         if (!BuildConfig.DEMO_MODE) {
             ensureResumePings();
         }
