@@ -27,12 +27,14 @@ public final class SettingsView extends View {
     private static final SkinRegistry.Definition[] SKINS =
             SkinRegistry.getDefinitions();
     private static final CharSequence[] SKIN_TITLES = createSkinTitles();
-    private static final float CONFIGURE_TOP = 300.0f;
-    private static final float CONFIGURE_BOTTOM = 348.0f;
-    private static final float SAVE_TOP_DEFAULT = 340.0f;
-    private static final float SAVE_BOTTOM_DEFAULT = 398.0f;
-    private static final float SAVE_TOP_WITH_SETTINGS = 365.0f;
-    private static final float SAVE_BOTTOM_WITH_SETTINGS = 423.0f;
+    private static final float CONFIGURE_TOP = 288.0f;
+    private static final float CONFIGURE_BOTTOM = 330.0f;
+    private static final float SAVE_TOP_DEFAULT = 300.0f;
+    private static final float SAVE_BOTTOM_DEFAULT = 350.0f;
+    private static final float SAVE_TOP_WITH_SETTINGS = 340.0f;
+    private static final float SAVE_BOTTOM_WITH_SETTINGS = 390.0f;
+    private static final float UPDATE_HEIGHT = 44.0f;
+    private static final float UPDATE_GAP = 10.0f;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
     private final SkinSettingsSession session;
@@ -46,6 +48,8 @@ public final class SettingsView extends View {
         void onDraftChanged(SkinSettingsSession.Snapshot draft);
 
         void onSaveRequested(SkinSettingsSession.Snapshot draft);
+
+        void onCheckUpdateRequested();
     }
 
     SettingsView(
@@ -71,28 +75,39 @@ public final class SettingsView extends View {
         canvas.translate(contentOffsetX, contentOffsetY);
         canvas.scale(contentScale, contentScale);
 
-        drawCenteredText(canvas, "H9 Cluster", 480.0f, 54.0f, 34.0f, COLOR_TEXT, true);
+        drawCenteredText(canvas, "H9 Cluster", 480.0f, 48.0f, 32.0f, COLOR_TEXT, true);
         drawCenteredText(
                 canvas,
                 "Разработчик: admin.ru.net",
                 480.0f,
-                84.0f,
-                18.0f,
+                76.0f,
+                16.0f,
                 COLOR_ACCENT,
+                false);
+        drawCenteredText(
+                canvas,
+                "Версия " + BuildConfig.VERSION_NAME
+                        + "  ·  GitHub "
+                        + BuildConfig.UPDATE_GITHUB_REPO,
+                480.0f,
+                98.0f,
+                14.0f,
+                COLOR_MUTED,
                 false);
         drawCenteredText(
                 canvas,
                 BuildConfig.DEMO_MODE
                         ? "Выберите тему для автономного Demo"
-                        : "Выберите тему, которая будет автоматически запускаться на дисплее 2",
+                        : "Выберите тему для дисплея 2 или заводскую штатную панель",
                 480.0f,
-                125.0f,
-                17.0f,
+                122.0f,
+                16.0f,
                 COLOR_MUTED,
                 false);
 
         drawSkinSelector(canvas);
 
+        boolean factorySelected = !selectedDefinition().overlaysCluster();
         boolean configurable = selectedDefinition().hasSettings();
         if (configurable) {
             drawConfigureButton(canvas);
@@ -116,25 +131,53 @@ public final class SettingsView extends View {
                 paint);
         drawCenteredText(
                 canvas,
-                BuildConfig.DEMO_MODE
-                        ? "Сохранить и запустить"
-                        : "Сохранить и запустить на дисплее 2",
+                saveButtonLabel(factorySelected),
                 480.0f,
-                saveTop + 36.0f,
-                19.0f,
+                saveTop + 32.0f,
+                18.0f,
                 Color.BLACK,
+                true);
+
+        float updateTop = saveBottom + UPDATE_GAP;
+        float updateBottom = updateTop + UPDATE_HEIGHT;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(COLOR_CARD_SELECTED);
+        canvas.drawRoundRect(
+                255.0f,
+                updateTop,
+                705.0f,
+                updateBottom,
+                12.0f,
+                12.0f,
+                paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2.0f);
+        paint.setColor(COLOR_ACCENT);
+        canvas.drawRoundRect(
+                255.0f,
+                updateTop,
+                705.0f,
+                updateBottom,
+                12.0f,
+                12.0f,
+                paint);
+        drawCenteredText(
+                canvas,
+                "Проверить обновление",
+                480.0f,
+                updateTop + 29.0f,
+                17.0f,
+                COLOR_TEXT,
                 true);
 
         drawCenteredText(
                 canvas,
                 status.length() == 0
-                        ? BuildConfig.DEMO_MODE
-                                ? "Demo использует только тестовые данные"
-                                : "При автозапуске основной дисплей остаётся свободным"
+                        ? defaultHint(factorySelected)
                         : status,
                 480.0f,
-                455.0f,
-                16.0f,
+                510.0f,
+                15.0f,
                 status.length() == 0 ? COLOR_MUTED : COLOR_ACCENT,
                 false);
 
@@ -167,8 +210,8 @@ public final class SettingsView extends View {
                 canvas,
                 "Настроить выбранную тему",
                 480.0f,
-                CONFIGURE_TOP + 31.0f,
-                17.0f,
+                CONFIGURE_TOP + 28.0f,
+                16.0f,
                 COLOR_TEXT,
                 true);
     }
@@ -177,28 +220,28 @@ public final class SettingsView extends View {
         SkinRegistry.Definition option = selectedDefinition();
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(COLOR_CARD_SELECTED);
-        canvas.drawRoundRect(110.0f, 160.0f, 850.0f, 280.0f, 16.0f, 16.0f, paint);
+        canvas.drawRoundRect(110.0f, 140.0f, 850.0f, 268.0f, 16.0f, 16.0f, paint);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(2.0f);
         paint.setColor(COLOR_ACCENT);
-        canvas.drawRoundRect(110.0f, 160.0f, 850.0f, 280.0f, 16.0f, 16.0f, paint);
+        canvas.drawRoundRect(110.0f, 140.0f, 850.0f, 268.0f, 16.0f, 16.0f, paint);
 
-        drawLeftText(canvas, "Тема приборной панели", 140.0f, 192.0f, 15.0f, COLOR_MUTED, false);
-        drawLeftText(canvas, option.title, 140.0f, 226.0f, 21.0f, COLOR_TEXT, true);
+        drawLeftText(canvas, "Тема приборной панели", 140.0f, 172.0f, 14.0f, COLOR_MUTED, false);
+        drawLeftText(canvas, option.title, 140.0f, 206.0f, 20.0f, COLOR_TEXT, true);
         drawLeftText(
                 canvas,
                 option.description,
                 140.0f,
-                254.0f,
-                15.0f,
+                236.0f,
+                14.0f,
                 COLOR_MUTED,
                 false);
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(2.0f);
         paint.setColor(COLOR_ACCENT);
-        canvas.drawLine(794.0f, 211.0f, 808.0f, 225.0f, paint);
-        canvas.drawLine(808.0f, 225.0f, 822.0f, 211.0f, paint);
+        canvas.drawLine(794.0f, 195.0f, 808.0f, 209.0f, paint);
+        canvas.drawLine(808.0f, 209.0f, 822.0f, 195.0f, paint);
     }
 
     @Override
@@ -209,7 +252,7 @@ public final class SettingsView extends View {
         performClick();
         float x = (event.getX() - contentOffsetX) / contentScale;
         float y = (event.getY() - contentOffsetY) / contentScale;
-        if (x >= 110.0f && x <= 850.0f && y >= 160.0f && y <= 280.0f) {
+        if (x >= 110.0f && x <= 850.0f && y >= 140.0f && y <= 268.0f) {
             showSkinPicker();
             return true;
         }
@@ -233,6 +276,15 @@ public final class SettingsView extends View {
                 && y >= saveTop
                 && y <= saveBottom) {
             listener.onSaveRequested(session.snapshot());
+            return true;
+        }
+        float updateTop = saveBottom + UPDATE_GAP;
+        float updateBottom = updateTop + UPDATE_HEIGHT;
+        if (x >= 255.0f
+                && x <= 705.0f
+                && y >= updateTop
+                && y <= updateBottom) {
+            listener.onCheckUpdateRequested();
             return true;
         }
         return true;
@@ -303,14 +355,42 @@ public final class SettingsView extends View {
     }
 
     void showSaveResult(boolean launched) {
-        status = launched
-                ? BuildConfig.DEMO_MODE
-                        ? "Настройки сохранены и запущены"
-                        : "Настройки сохранены и запущены на дисплее 2"
-                : BuildConfig.DEMO_MODE
-                        ? "Настройки сохранены. Не удалось запустить Demo"
-                        : "Настройки сохранены. Дисплей 2 сейчас недоступен";
+        boolean factorySelected = !selectedDefinition().overlaysCluster();
+        if (factorySelected) {
+            status = "Сохранено: на дисплее 2 остаётся заводская панель";
+        } else if (launched) {
+            status = BuildConfig.DEMO_MODE
+                    ? "Настройки сохранены и запущены"
+                    : "Настройки сохранены и запущены на дисплее 2";
+        } else {
+            status = BuildConfig.DEMO_MODE
+                    ? "Настройки сохранены. Не удалось запустить Demo"
+                    : "Настройки сохранены. Дисплей 2 сейчас недоступен";
+        }
         invalidate();
+    }
+
+    void setStatusMessage(String message) {
+        status = message == null ? "" : message;
+        invalidate();
+    }
+
+    private static String saveButtonLabel(boolean factorySelected) {
+        if (factorySelected) {
+            return "Сохранить заводскую панель";
+        }
+        return BuildConfig.DEMO_MODE
+                ? "Сохранить и запустить"
+                : "Сохранить и запустить на дисплее 2";
+    }
+
+    private static String defaultHint(boolean factorySelected) {
+        if (factorySelected) {
+            return "При автозапуске кастомная панель не будет перекрывать дисплей 2";
+        }
+        return BuildConfig.DEMO_MODE
+                ? "Demo использует только тестовые данные"
+                : "При автозапуске основной дисплей остаётся свободным";
     }
 
     private static CharSequence[] createSkinTitles() {

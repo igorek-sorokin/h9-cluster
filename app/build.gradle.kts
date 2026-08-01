@@ -46,8 +46,8 @@ android {
         applicationId = "net.adminrunet.h9cluster"
         minSdk = 28
         targetSdk = 28
-        versionCode = 2026073001
-        versionName = "9.3.2"
+        versionCode = 2026080101
+        versionName = "9.4.0"
         manifestPlaceholders["bootReceiverEnabled"] = "true"
         manifestPlaceholders["fdbusProbeEnabled"] = "false"
         buildConfigField(
@@ -59,6 +59,11 @@ android {
             "String",
             "TBOX_SECRET_DATA",
             buildConfigString(tboxSecretDataBase64)
+        )
+        buildConfigField(
+            "String",
+            "UPDATE_GITHUB_REPO",
+            buildConfigString("igorek-sorokin/h9-cluster")
         )
 
         ndk {
@@ -106,12 +111,19 @@ android {
                 buildConfigString("")
             )
             matchingFallbacks += listOf("debug")
+            // Emulator-friendly: Demo does not need vehicle ARM64 JNI libs.
+            ndk {
+                abiFilters.clear()
+            }
         }
         release {
             isMinifyEnabled = false
             buildConfigField("boolean", "DEMO_MODE", "false")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("releaseKey")
+            } else {
+                // Personal/fork builds: signed with the debug keystore so APK installs.
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }
@@ -133,7 +145,15 @@ android {
     }
 }
 
+// Demo is for emulator/desktop checks and must not package vehicle ARM64 .so files.
+androidComponents {
+    onVariants(selector().withBuildType("demo")) { variant ->
+        variant.packaging.jniLibs.excludes.add("**/*.so")
+    }
+}
+
 dependencies {
     implementation("com.jcraft:jsch:0.1.55")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

@@ -16,6 +16,7 @@ import android.view.View;
  * collection and the other renderers remain independent.</p>
  */
 public final class SkinRegistry {
+    public static final String FACTORY = "factory";
     public static final String CLASSIC = "classic";
     public static final String HORIZON = "horizon";
     public static final String SPORT = "sport";
@@ -42,6 +43,11 @@ public final class SkinRegistry {
             this.description = description;
             this.factory = factory;
             this.settingsProvider = settingsProvider;
+        }
+
+        /** False for the stock cluster option that must not cover Display ID 2. */
+        public boolean overlaysCluster() {
+            return factory != null;
         }
 
         public boolean hasSettings() {
@@ -86,11 +92,21 @@ public final class SkinRegistry {
         }
 
         private View createRenderer(Context context, SkinSettings settings) {
+            if (factory == null) {
+                throw new IllegalStateException(
+                        "Skin does not provide a cluster overlay: " + id);
+            }
             return factory.create(context, normalizeSettings(settings));
         }
     }
 
     private static final Definition[] DEFINITIONS = {
+        new Definition(
+                FACTORY,
+                "Заводская — штатная панель",
+                "Display ID 2 остаётся свободным, видна заводская приборка",
+                null,
+                null),
         new Definition(
                 CLASSIC,
                 "Classic — утверждённый дизайн",
@@ -152,6 +168,10 @@ public final class SkinRegistry {
         return false;
     }
 
+    public static boolean overlaysCluster(String id) {
+        return getDefinition(id).overlaysCluster();
+    }
+
     public static String normalize(String id) {
         return isSupported(id) ? id : getDefaultId();
     }
@@ -181,6 +201,10 @@ public final class SkinRegistry {
             String id,
             SkinSettings settings) {
         Definition definition = getDefinition(id);
+        if (!definition.overlaysCluster()) {
+            throw new IllegalStateException(
+                    "Skin does not provide a cluster overlay: " + definition.id);
+        }
         View view = definition.createRenderer(context, settings);
         if (!(view instanceof ClusterRenderer)) {
             throw new IllegalStateException(

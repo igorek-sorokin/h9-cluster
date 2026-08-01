@@ -32,14 +32,33 @@ public final class PreviewActivity extends Activity {
                     | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                     | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
 
+    private static PreviewActivity showingInstance;
+
     private ClusterRenderer clusterRenderer;
     private SkinSettingsSession.Snapshot activeSnapshot;
     private ClusterDataSource dataSource;
     private ClusterState lastState = ClusterState.empty();
 
+    /** Finishes the live overlay so the stock instrument cluster can show through. */
+    static void closeIfShowing() {
+        final PreviewActivity instance = showingInstance;
+        if (instance == null) {
+            return;
+        }
+        instance.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (!instance.isFinishing()) {
+                    instance.finish();
+                }
+            }
+        });
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        showingInstance = this;
         Log.i(TAG, "Starting build "
                 + BuildConfig.VERSION_NAME
                 + "-display2-api28");
@@ -59,7 +78,12 @@ public final class PreviewActivity extends Activity {
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
 
-        applySnapshot(resolveSnapshot(getIntent()), true);
+        SkinSettingsSession.Snapshot snapshot = resolveSnapshot(getIntent());
+        if (!SkinRegistry.overlaysCluster(snapshot.skinId)) {
+            finish();
+            return;
+        }
+        applySnapshot(snapshot, true);
 
         dataSource = BuildConfig.DEMO_MODE
                 ? new DemoClusterDataSource(this)
@@ -68,7 +92,9 @@ public final class PreviewActivity extends Activity {
             @Override
             public void onClusterState(ClusterState state) {
                 lastState = state;
-                clusterRenderer.setClusterState(state);
+                if (clusterRenderer != null) {
+                    clusterRenderer.setClusterState(state);
+                }
             }
         });
         hideSystemUi();
@@ -78,9 +104,14 @@ public final class PreviewActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        SkinSettingsSession.Snapshot snapshot = resolveSnapshot(intent);
+        if (!SkinRegistry.overlaysCluster(snapshot.skinId)) {
+            finish();
+            return;
+        }
         boolean forceReload = intent != null
                 && intent.getBooleanExtra(EXTRA_RELOAD_SKIN, false);
-        applySnapshot(resolveSnapshot(intent), forceReload);
+        applySnapshot(snapshot, forceReload);
     }
 
     private SkinSettingsSession.Snapshot resolveSnapshot(Intent intent) {
@@ -138,6 +169,9 @@ public final class PreviewActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (showingInstance == this) {
+            showingInstance = null;
+        }
         if (dataSource != null) {
             dataSource.stop();
         }

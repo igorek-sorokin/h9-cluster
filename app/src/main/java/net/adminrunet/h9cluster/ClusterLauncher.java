@@ -1,5 +1,7 @@
 package net.adminrunet.h9cluster;
 
+import net.adminrunet.h9cluster.skins.SkinRegistry;
+
 import android.app.Activity;
 import android.app.ActivityOptions;
 import android.content.Context;
@@ -16,13 +18,25 @@ public final class ClusterLauncher {
     }
 
     public static boolean startOnClusterDisplay(Context context) {
+        if (!SkinRegistry.overlaysCluster(SkinPreferences.getSelectedSkin(context))) {
+            return releaseClusterDisplay();
+        }
         return launchOnClusterDisplay(context, null);
     }
 
     static boolean previewOnClusterDisplay(
             Context context,
             SkinSettingsSession.Snapshot draft) {
+        if (draft != null && !SkinRegistry.overlaysCluster(draft.skinId)) {
+            return releaseClusterDisplay();
+        }
         return launchOnClusterDisplay(context, draft);
+    }
+
+    /** Closes a running overlay so the stock cluster on Display ID 2 is visible. */
+    static boolean releaseClusterDisplay() {
+        PreviewActivity.closeIfShowing();
+        return true;
     }
 
     private static boolean launchOnClusterDisplay(
