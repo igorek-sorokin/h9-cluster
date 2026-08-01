@@ -177,14 +177,11 @@ public final class AppUpdateManager {
         if (!dir.exists() && !dir.mkdirs()) {
             throw new IllegalStateException("Cannot create updates cache");
         }
+        clearUpdatesDir(dir);
         String safeName = release.apkName.length() == 0
                 ? "h9cluster-update.apk"
                 : release.apkName.replaceAll("[^a-zA-Z0-9._-]", "_");
         File target = new File(dir, safeName);
-        if (target.exists()) {
-            //noinspection ResultOfMethodCallIgnored
-            target.delete();
-        }
 
         HttpURLConnection connection =
                 (HttpURLConnection) new URL(release.apkDownloadUrl).openConnection();
@@ -239,6 +236,17 @@ public final class AppUpdateManager {
             throw new IllegalStateException("Downloaded APK is empty");
         }
         return target;
+    }
+
+    private static void clearUpdatesDir(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
     }
 
     private void launchInstaller(Activity activity, File apkFile) {
