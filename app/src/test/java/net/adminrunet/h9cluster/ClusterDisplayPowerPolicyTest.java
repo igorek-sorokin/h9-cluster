@@ -23,4 +23,17 @@ public final class ClusterDisplayPowerPolicyTest {
         assertTrue(ClusterDisplayPowerPolicy.shouldStartCluster(Display.STATE_ON_SUSPEND));
         assertFalse(ClusterDisplayPowerPolicy.shouldStartCluster(Display.STATE_OFF));
     }
+
+    @Test
+    public void zeroBrightnessReleasesCluster() {
+        assertTrue(ClusterDisplayPowerPolicy.shouldReleaseForBrightness(0));
+        assertFalse(ClusterDisplayPowerPolicy.shouldReleaseForBrightness(20));
+        assertTrue(ClusterDisplayPowerPolicy.shouldStartForBrightness(20));
+    }
+
+    @Test
+    public void nonInteractiveReleasesCluster() {
+        assertTrue(ClusterDisplayPowerPolicy.shouldReleaseForInteractive(false));
+        assertFalse(ClusterDisplayPowerPolicy.shouldReleaseForInteractive(true));
+    }
 }

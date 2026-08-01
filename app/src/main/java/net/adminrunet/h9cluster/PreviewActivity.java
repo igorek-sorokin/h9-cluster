@@ -41,6 +41,11 @@ public final class PreviewActivity extends Activity {
 
     /** Finishes the live overlay so the stock instrument cluster can show through. */
     static void closeIfShowing() {
+        blankAndCloseIfShowing();
+    }
+
+    /** Blanks Display ID 2 immediately, then finishes the overlay activity. */
+    static void blankAndCloseIfShowing() {
         final PreviewActivity instance = showingInstance;
         if (instance == null) {
             return;
@@ -48,9 +53,19 @@ public final class PreviewActivity extends Activity {
         instance.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                if (!instance.isFinishing()) {
-                    instance.finish();
+                if (instance.isFinishing()) {
+                    return;
                 }
+                try {
+                    WindowManager.LayoutParams params =
+                            instance.getWindow().getAttributes();
+                    params.screenBrightness = 0.0f;
+                    instance.getWindow().setAttributes(params);
+                    instance.getWindow().clearFlags(
+                            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } catch (RuntimeException ignored) {
+                }
+                instance.finish();
             }
         });
     }
@@ -64,9 +79,9 @@ public final class PreviewActivity extends Activity {
                 + "-display2-api28");
 
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().addFlags(
-                WindowManager.LayoutParams.FLAG_FULLSCREEN
-                        | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        // Do not use FLAG_KEEP_SCREEN_ON: on Haval it keeps Display ID 2 lit after
+        // ACC/ignition blanks the head unit without sending SCREEN_OFF.
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         getWindow().setDimAmount(0.0f);
         getWindow().setFormat(PreviewAppearance.usesOpaqueWindow(BuildConfig.DEMO_MODE)
