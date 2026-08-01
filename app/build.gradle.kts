@@ -155,5 +155,5 @@ androidComponents {
 dependencies {
     implementation("com.jcraft:jsch:0.1.55")
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.json:json:20240303")
+    testImplementation("org.json:json:20260719")
 }
