@@ -31,6 +31,7 @@ final class ClusterPowerController {
     private static final long RETRY_DELAY_MS = 1500L;
     private static final long START_DEBOUNCE_MS = 800L;
     private static final long POLL_INTERVAL_MS = 1000L;
+    private static final long RESUME_PING_INTERVAL_MS = 20000L;
 
     private static final String[] EXTRA_OFF_ACTIONS = {
             Intent.ACTION_SHUTDOWN,
@@ -123,7 +124,46 @@ final class ClusterPowerController {
     private Runnable startAttempts;
     private boolean suspendedByPower;
     private boolean registered;
-    private ClusterDataSource resumeProbe;
+    private boolean resumePingInFlight;
+    private final Runnable resumePingRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!suspendedByPower || BuildConfig.DEMO_MODE) {
+                return;
+            }
+            if (!SkinRegistry.overlaysCluster(
+                    SkinPreferences.getSelectedSkin(appContext))) {
+                return;
+            }
+            if (resumePingInFlight) {
+                handler.postDelayed(this, RESUME_PING_INTERVAL_MS);
+                return;
+            }
+            resumePingInFlight = true;
+            Log.i(TAG, "Periodic GWM presence ping");
+            new GwmPresenceProbe(appContext, new GwmPresenceProbe.Callback() {
+                @Override
+                public void onVehicleAlive() {
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (suspendedByPower) {
+                                clearSuspendAndStart("gwm-ping-alive");
+                            }
+                        }
+                    });
+                }
+
+                @Override
+                public void onFinished() {
+                    resumePingInFlight = false;
+                    if (suspendedByPower) {
+                        handler.postDelayed(resumePingRunnable, RESUME_PING_INTERVAL_MS);
+                    }
+                }
+            }).start();
+        }
+    };
 
     ClusterPowerController(Context context) {
         this.appContext = context.getApplicationContext();
@@ -138,7 +178,7 @@ final class ClusterPowerController {
         ClusterPowerController controller = instance;
         if (controller != null) {
             controller.suspendedByPower = false;
-            controller.stopResumeProbe();
+            controller.stopResumePings();
         }
     }
 
@@ -217,7 +257,7 @@ final class ClusterPowerController {
         }
 
         if (suspendedByPower) {
-            ensureResumeProbe();
+            ensureResumePings();
         }
     }
 
@@ -229,63 +269,40 @@ final class ClusterPowerController {
         PreviewActivity.forceRemoveOverlay(appContext);
         VehicleAwakeTracker.get().reset();
         if (!BuildConfig.DEMO_MODE) {
-            ensureResumeProbe();
+            ensureResumePings();
         }
         if (!alreadySuspended) {
-            Log.i(TAG, "Waiting for GWM telemetry to restore last theme");
+            Log.i(TAG, "Waiting for vehicle wake via rare GWM pings / ACC broadcasts");
         }
     }
 
-    private void ensureResumeProbe() {
-        if (BuildConfig.DEMO_MODE || resumeProbe != null) {
+    private void ensureResumePings() {
+        if (BuildConfig.DEMO_MODE) {
             return;
         }
         if (!SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
+            stopResumePings();
             return;
         }
-        Log.i(TAG, "Starting background GWM resume probe");
-        resumeProbe = new GwmClusterDataSource(appContext);
-        resumeProbe.start(new ClusterDataSource.Listener() {
-            @Override
-            public void onClusterState(ClusterState state) {
-                VehicleAwakeTracker.get().onTelemetry();
-                handler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!suspendedByPower) {
-                            stopResumeProbe();
-                            return;
-                        }
-                        Log.i(TAG, "GWM telemetry resumed — restoring cluster theme");
-                        clearSuspendAndStart("gwm-telemetry-resumed");
-                    }
-                });
-            }
-        });
+        handler.removeCallbacks(resumePingRunnable);
+        handler.post(resumePingRunnable);
     }
 
-    private void stopResumeProbe() {
-        if (resumeProbe == null) {
-            return;
-        }
-        try {
-            resumeProbe.stop();
-        } catch (RuntimeException error) {
-            Log.w(TAG, "Resume probe stop failed", error);
-        }
-        resumeProbe = null;
+    private void stopResumePings() {
+        handler.removeCallbacks(resumePingRunnable);
+        resumePingInFlight = false;
     }
 
     private void clearSuspendAndStart(String reason) {
         if (!SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
             suspendedByPower = false;
-            stopResumeProbe();
+            stopResumePings();
             return;
         }
         suspendedByPower = false;
-        stopResumeProbe();
+        stopResumePings();
         scheduleClusterStart(reason);
     }
 
