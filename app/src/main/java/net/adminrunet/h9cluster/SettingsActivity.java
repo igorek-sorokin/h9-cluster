@@ -64,6 +64,7 @@ public final class SettingsActivity extends Activity {
                                     entry.getValue());
                         }
                         unsavedPreviewActive = false;
+                        ClusterPowerController.clearSuspendForUserLaunch();
                         boolean launched =
                                 ClusterLauncher.startOnClusterDisplay(
                                         SettingsActivity.this);

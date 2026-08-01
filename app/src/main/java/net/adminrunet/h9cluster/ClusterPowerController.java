@@ -2,7 +2,9 @@ package net.adminrunet.h9cluster;
 
 import net.adminrunet.h9cluster.skins.SkinRegistry;
 
+import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -12,23 +14,23 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
 
 /**
- * Closes the Display ID 2 overlay when the head unit powers down / blanks.
+ * Removes the custom cluster overlay when the vehicle powers down and leaves the
+ * stock cluster visible (same outcome as choosing the Factory theme).
  *
- * <p>Haval HU often dims the main screen without {@code SCREEN_OFF}; combined with
- * {@code FLAG_KEEP_SCREEN_ON} on the cluster that leaves Display ID 2 lit. This
- * controller watches screen broadcasts, display state, brightness and
- * {@link PowerManager#isInteractive()}.</p>
+ * <p>Haval often blanks the HU without {@code SCREEN_OFF}. When GWM telemetry
+ * stops updating, this controller treats that as ACC/ignition off.</p>
  */
 final class ClusterPowerController {
     private static final String TAG = "H9ClusterPower";
     private static final int MAX_ATTEMPTS = 6;
     private static final long RETRY_DELAY_MS = 1500L;
-    private static final long START_DEBOUNCE_MS = 800L;
+    private static final long START_DEBOUNCE_MS = 1000L;
     private static final long POLL_INTERVAL_MS = 1000L;
 
     private static final String[] EXTRA_OFF_ACTIONS = {
@@ -56,6 +58,8 @@ final class ClusterPowerController {
             "com.yx.intent.action.ACC_ON"
     };
 
+    private static ClusterPowerController instance;
+
     private final Context appContext;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final DisplayManager displayManager;
@@ -70,7 +74,7 @@ final class ClusterPowerController {
                 public void onDisplayRemoved(int displayId) {
                     if (displayId == Display.DEFAULT_DISPLAY
                             || displayId == ClusterDisplayPolicy.CLUSTER_DISPLAY_ID) {
-                        releaseCluster("display removed " + displayId);
+                        releaseToFactory("display removed " + displayId);
                     }
                 }
 
@@ -91,9 +95,9 @@ final class ClusterPowerController {
             String action = intent.getAction();
             Log.i(TAG, "Power broadcast: " + action);
             if (Intent.ACTION_SCREEN_OFF.equals(action) || isOffAction(action)) {
-                releaseCluster(action);
+                releaseToFactory(action);
             } else if (Intent.ACTION_SCREEN_ON.equals(action) || isOnAction(action)) {
-                scheduleClusterStart(action);
+                clearSuspendAndStart(action);
             }
         }
     };
@@ -119,6 +123,7 @@ final class ClusterPowerController {
     private Runnable pendingStart;
     private Runnable startAttempts;
     private Boolean lastReleaseDecision;
+    private boolean suspendedByPower;
     private boolean registered;
 
     ClusterPowerController(Context context) {
@@ -127,6 +132,20 @@ final class ClusterPowerController {
                 (DisplayManager) appContext.getSystemService(Context.DISPLAY_SERVICE);
         this.powerManager =
                 (PowerManager) appContext.getSystemService(Context.POWER_SERVICE);
+        instance = this;
+    }
+
+    static void clearSuspendForUserLaunch() {
+        ClusterPowerController controller = instance;
+        if (controller != null) {
+            controller.suspendedByPower = false;
+            controller.lastReleaseDecision = null;
+        }
+    }
+
+    static boolean isSuspendedByPower() {
+        ClusterPowerController controller = instance;
+        return controller != null && controller.suspendedByPower;
     }
 
     void start() {
@@ -158,33 +177,19 @@ final class ClusterPowerController {
         Log.i(TAG, "Cluster power controller armed");
     }
 
-    void stop() {
-        if (!registered) {
-            return;
-        }
-        cancelPendingWork();
-        handler.removeCallbacks(pollRunnable);
-        try {
-            appContext.getContentResolver().unregisterContentObserver(brightnessObserver);
-        } catch (RuntimeException ignored) {
-        }
-        try {
-            appContext.unregisterReceiver(powerReceiver);
-        } catch (RuntimeException ignored) {
-        }
-        displayManager.unregisterDisplayListener(displayListener);
-        registered = false;
-    }
-
     private void evaluatePowerSignals(String reason) {
+        long now = SystemClock.elapsedRealtime();
         boolean interactive = powerManager == null || powerManager.isInteractive();
         int brightness = readBrightness();
         int hostState = readDisplayState(Display.DEFAULT_DISPLAY);
-        int clusterState = readDisplayState(ClusterDisplayPolicy.CLUSTER_DISPLAY_ID);
+        boolean telemetryStale = !BuildConfig.DEMO_MODE
+                && VehicleAwakeTracker.get().isStale(now);
+        long telemetryAge = VehicleAwakeTracker.get().lastTelemetryAgeMs(now);
 
         boolean release = ClusterDisplayPowerPolicy.shouldReleaseForInteractive(interactive)
                 || ClusterDisplayPowerPolicy.shouldReleaseCluster(hostState)
-                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness);
+                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness)
+                || telemetryStale;
 
         Log.i(TAG, "Power eval ("
                 + reason
@@ -194,32 +199,66 @@ final class ClusterPowerController {
                 + brightness
                 + " hostState="
                 + hostState
-                + " clusterState="
-                + clusterState
+                + " telemetryAgeMs="
+                + telemetryAge
+                + " stale="
+                + telemetryStale
+                + " suspended="
+                + suspendedByPower
                 + " release="
                 + release);
 
-        if (lastReleaseDecision != null && lastReleaseDecision == release) {
+        if (release) {
+            lastReleaseDecision = true;
+            releaseToFactory(reason);
             return;
         }
-        lastReleaseDecision = release;
-        if (release) {
-            releaseCluster(reason);
-        } else if (ClusterDisplayPowerPolicy.shouldStartCluster(hostState)
-                || ClusterDisplayPowerPolicy.shouldStartForBrightness(brightness)) {
+
+        boolean hostAwake = interactive
+                && ClusterDisplayPowerPolicy.shouldStartCluster(hostState)
+                && !ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness);
+
+        if (suspendedByPower) {
+            if (hostAwake) {
+                lastReleaseDecision = false;
+                clearSuspendAndStart("host-awake:" + reason);
+            }
+            return;
+        }
+
+        if (lastReleaseDecision != null && !lastReleaseDecision) {
+            return;
+        }
+        lastReleaseDecision = false;
+        if (hostAwake) {
             scheduleClusterStart(reason);
         }
     }
 
-    private void releaseCluster(String reason) {
+    private void releaseToFactory(String reason) {
         cancelPendingWork();
-        Log.i(TAG, "Releasing cluster overlay (" + reason + ")");
-        PreviewActivity.blankAndCloseIfShowing();
+        suspendedByPower = true;
+        Log.i(TAG, "Switching to factory cluster (" + reason + ")");
+        PreviewActivity.forceRemoveOverlay(appContext);
+    }
+
+    private void clearSuspendAndStart(String reason) {
+        if (!SkinRegistry.overlaysCluster(
+                SkinPreferences.getSelectedSkin(appContext))) {
+            suspendedByPower = false;
+            return;
+        }
+        suspendedByPower = false;
+        scheduleClusterStart(reason);
     }
 
     private void scheduleClusterStart(String reason) {
         if (!SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
+            return;
+        }
+        if (shouldReleaseNow()) {
+            Log.i(TAG, "Skip start, still off (" + reason + ")");
             return;
         }
         cancelPendingWork();
@@ -242,7 +281,7 @@ final class ClusterPowerController {
             public void run() {
                 if (shouldReleaseNow()) {
                     startAttempts = null;
-                    releaseCluster("start-aborted-still-off");
+                    releaseToFactory("start-aborted-still-off");
                     return;
                 }
                 attempt++;
@@ -258,12 +297,16 @@ final class ClusterPowerController {
     }
 
     private boolean shouldReleaseNow() {
+        long now = SystemClock.elapsedRealtime();
         boolean interactive = powerManager == null || powerManager.isInteractive();
         int brightness = readBrightness();
         int hostState = readDisplayState(Display.DEFAULT_DISPLAY);
+        boolean telemetryStale = !BuildConfig.DEMO_MODE
+                && VehicleAwakeTracker.get().isStale(now);
         return ClusterDisplayPowerPolicy.shouldReleaseForInteractive(interactive)
                 || ClusterDisplayPowerPolicy.shouldReleaseCluster(hostState)
-                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness);
+                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness)
+                || telemetryStale;
     }
 
     private void cancelPendingWork() {

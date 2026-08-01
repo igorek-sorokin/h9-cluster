@@ -19,7 +19,11 @@ public final class ClusterLauncher {
 
     public static boolean startOnClusterDisplay(Context context) {
         if (!SkinRegistry.overlaysCluster(SkinPreferences.getSelectedSkin(context))) {
-            return releaseClusterDisplay();
+            return releaseClusterDisplay(context);
+        }
+        if (ClusterPowerController.isSuspendedByPower()) {
+            Log.i(TAG, "Skip launch: suspended after ignition/ACC off");
+            return false;
         }
         return launchOnClusterDisplay(context, null);
     }
@@ -27,15 +31,16 @@ public final class ClusterLauncher {
     static boolean previewOnClusterDisplay(
             Context context,
             SkinSettingsSession.Snapshot draft) {
+        ClusterPowerController.clearSuspendForUserLaunch();
         if (draft != null && !SkinRegistry.overlaysCluster(draft.skinId)) {
-            return releaseClusterDisplay();
+            return releaseClusterDisplay(context);
         }
         return launchOnClusterDisplay(context, draft);
     }
 
     /** Closes a running overlay so the stock cluster on Display ID 2 is visible. */
-    static boolean releaseClusterDisplay() {
-        PreviewActivity.closeIfShowing();
+    static boolean releaseClusterDisplay(Context context) {
+        PreviewActivity.forceRemoveOverlay(context);
         return true;
     }
 

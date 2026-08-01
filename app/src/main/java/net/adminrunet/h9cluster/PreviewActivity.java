@@ -4,7 +4,10 @@ import net.adminrunet.h9cluster.skins.SkinRegistry;
 import net.adminrunet.h9cluster.skins.SkinSettings;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.ActivityOptions;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
@@ -39,35 +42,81 @@ public final class PreviewActivity extends Activity {
     private ClusterDataSource dataSource;
     private ClusterState lastState = ClusterState.empty();
 
-    /** Finishes the live overlay so the stock instrument cluster can show through. */
-    static void closeIfShowing() {
-        blankAndCloseIfShowing();
+    static boolean isShowing() {
+        PreviewActivity instance = showingInstance;
+        return instance != null && !instance.isFinishing();
     }
 
-    /** Blanks Display ID 2 immediately, then finishes the overlay activity. */
+    /** Finishes the live overlay so the stock instrument cluster can show through. */
+    static void closeIfShowing() {
+        forceRemoveOverlay(null);
+    }
+
     static void blankAndCloseIfShowing() {
+        forceRemoveOverlay(null);
+    }
+
+    /**
+     * Fully removes the custom cluster task from Display ID 2 so the factory
+     * cluster (and its power behavior) can take over.
+     */
+    static void forceRemoveOverlay(Context appContext) {
         final PreviewActivity instance = showingInstance;
-        if (instance == null) {
-            return;
+        if (instance != null) {
+            instance.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (instance.isFinishing()) {
+                        return;
+                    }
+                    try {
+                        instance.getWindow().setBackgroundDrawable(
+                                new ColorDrawable(Color.BLACK));
+                        View black = new View(instance);
+                        black.setBackgroundColor(Color.BLACK);
+                        instance.setContentView(black);
+                        WindowManager.LayoutParams params =
+                                instance.getWindow().getAttributes();
+                        params.screenBrightness = 0.0f;
+                        instance.getWindow().setAttributes(params);
+                    } catch (RuntimeException ignored) {
+                    }
+                    try {
+                        instance.finishAndRemoveTask();
+                    } catch (RuntimeException error) {
+                        instance.finish();
+                    }
+                }
+            });
         }
-        instance.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (instance.isFinishing()) {
-                    return;
-                }
-                try {
-                    WindowManager.LayoutParams params =
-                            instance.getWindow().getAttributes();
-                    params.screenBrightness = 0.0f;
-                    instance.getWindow().setAttributes(params);
-                    instance.getWindow().clearFlags(
-                            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                } catch (RuntimeException ignored) {
-                }
-                instance.finish();
+        if (appContext != null) {
+            finishPreviewTasks(appContext.getApplicationContext());
+        }
+    }
+
+    private static void finishPreviewTasks(Context context) {
+        try {
+            ActivityManager manager =
+                    (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager == null) {
+                return;
             }
-        });
+            for (ActivityManager.AppTask task : manager.getAppTasks()) {
+                ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                if (info == null) {
+                    continue;
+                }
+                ComponentName top = info.topActivity != null
+                        ? info.topActivity
+                        : info.baseActivity;
+                if (top != null
+                        && PreviewActivity.class.getName().equals(top.getClassName())) {
+                    task.finishAndRemoveTask();
+                }
+            }
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Cannot finish preview tasks", error);
+        }
     }
 
     @Override
@@ -107,6 +156,7 @@ public final class PreviewActivity extends Activity {
             @Override
             public void onClusterState(ClusterState state) {
                 lastState = state;
+                VehicleAwakeTracker.get().onTelemetry();
                 if (clusterRenderer != null) {
                     clusterRenderer.setClusterState(state);
                 }
