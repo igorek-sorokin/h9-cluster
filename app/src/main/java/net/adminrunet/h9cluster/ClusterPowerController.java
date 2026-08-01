@@ -22,8 +22,8 @@ import android.view.Display;
  * the last selected theme when the vehicle wakes again.
  *
  * <p>Haval often blanks the HU without {@code SCREEN_OFF}. Overlay close is driven
- * by GWM telemetry going stale; wake is detected by a background GWM probe that
- * sees data again after ACC/ignition returns.</p>
+ * by GWM telemetry going stale; wake is detected by rare background listens that
+ * wait for live GWM pushes (cached GET_DATA alone is ignored).</p>
  */
 final class ClusterPowerController {
     private static final String TAG = "H9ClusterPower";
@@ -32,6 +32,7 @@ final class ClusterPowerController {
     private static final long START_DEBOUNCE_MS = 800L;
     private static final long POLL_INTERVAL_MS = 1000L;
     private static final long RESUME_PING_INTERVAL_MS = 20000L;
+    private static final long RESUME_PING_FIRST_DELAY_MS = 8000L;
 
     private static final String[] EXTRA_OFF_ACTIONS = {
             Intent.ACTION_SHUTDOWN,
@@ -125,22 +126,24 @@ final class ClusterPowerController {
     private boolean suspendedByPower;
     private boolean registered;
     private boolean resumePingInFlight;
+    private boolean resumePingsArmed;
     private final Runnable resumePingRunnable = new Runnable() {
         @Override
         public void run() {
             if (!suspendedByPower || BuildConfig.DEMO_MODE) {
+                resumePingsArmed = false;
                 return;
             }
             if (!SkinRegistry.overlaysCluster(
                     SkinPreferences.getSelectedSkin(appContext))) {
+                resumePingsArmed = false;
                 return;
             }
             if (resumePingInFlight) {
-                handler.postDelayed(this, RESUME_PING_INTERVAL_MS);
                 return;
             }
             resumePingInFlight = true;
-            Log.i(TAG, "Periodic GWM presence ping");
+            Log.i(TAG, "Periodic GWM presence ping (live pushes only)");
             new GwmPresenceProbe(appContext, new GwmPresenceProbe.Callback() {
                 @Override
                 public void onVehicleAlive() {
@@ -148,7 +151,7 @@ final class ClusterPowerController {
                         @Override
                         public void run() {
                             if (suspendedByPower) {
-                                clearSuspendAndStart("gwm-ping-alive");
+                                clearSuspendAndStart("gwm-live-push");
                             }
                         }
                     });
@@ -158,7 +161,9 @@ final class ClusterPowerController {
                 public void onFinished() {
                     resumePingInFlight = false;
                     if (suspendedByPower) {
-                        handler.postDelayed(resumePingRunnable, RESUME_PING_INTERVAL_MS);
+                        scheduleNextResumePing(RESUME_PING_INTERVAL_MS);
+                    } else {
+                        resumePingsArmed = false;
                     }
                 }
             }).start();
@@ -285,13 +290,24 @@ final class ClusterPowerController {
             stopResumePings();
             return;
         }
+        // Do not re-post every poll tick — that cancelled the delay and
+        // restarted the overlay from cached GWM replies.
+        if (resumePingsArmed || resumePingInFlight) {
+            return;
+        }
+        scheduleNextResumePing(RESUME_PING_FIRST_DELAY_MS);
+    }
+
+    private void scheduleNextResumePing(long delayMs) {
+        resumePingsArmed = true;
         handler.removeCallbacks(resumePingRunnable);
-        handler.post(resumePingRunnable);
+        handler.postDelayed(resumePingRunnable, delayMs);
     }
 
     private void stopResumePings() {
         handler.removeCallbacks(resumePingRunnable);
         resumePingInFlight = false;
+        resumePingsArmed = false;
     }
 
     private void clearSuspendAndStart(String reason) {

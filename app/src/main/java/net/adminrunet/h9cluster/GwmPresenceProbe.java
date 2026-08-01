@@ -11,10 +11,11 @@ import android.os.Parcel;
 import android.util.Log;
 
 /**
- * One-shot GWM adapter ping used after ACC off. Does not start FDBus/TBOX
- * readers and unbinds immediately after the first successful GET_DATA.
+ * Brief GWM listen used after ACC off. A static GET_DATA reply is not enough —
+ * the adapter often still returns cached values while the car is asleep. Wake is
+ * confirmed only when the live listener pushes at least one update.
  */
-final class GwmPresenceProbe implements ServiceConnection {
+final class GwmPresenceProbe implements ServiceConnection, ReadOnlyDataListener.Callback {
     interface Callback {
         void onVehicleAlive();
 
@@ -22,24 +23,32 @@ final class GwmPresenceProbe implements ServiceConnection {
     }
 
     private static final String TAG = "H9ClusterPower";
-    private static final String SERVICE_PACKAGE = "com.gwm.android.adapter";
+    private static final String SERVICE_PACKAGE = "com.gwm.android.adapter.server";
     private static final String SERVICE_CLASS =
             "com.gwm.android.adapter.server.GwmAdapterService";
     private static final String SERVICE_DESCRIPTOR =
-            "com.gwm.android.adapter.IGwmAdapter";
-    private static final int TRANSACTION_GET_DATA = 1;
-    private static final long TIMEOUT_MS = 2500L;
+            "com.gwm.android.adapter.IGwmAdapterService";
+    private static final int TRANSACTION_REGISTER_LISTENER = 3;
+    private static final int TRANSACTION_UNREGISTER_LISTENER = 4;
+    private static final long LISTEN_WINDOW_MS = 3500L;
 
-    private static final String[] PING_IDS = new String[] {
+    private static final String[] WATCH_IDS = new String[] {
             "car.basic.vehicle_speed",
-            "car.basic.battery_voltage"
+            "car.basic.engine_speed",
+            "car.basic.battery_voltage",
+            "car.basic.outside_temp",
+            "car.basic.steering_wheel_angle"
     };
 
     private final Context context;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Callback callback;
+    private final ReadOnlyDataListener dataListener;
+    private IBinder service;
     private boolean bound;
+    private boolean listenerRegistered;
     private boolean finished;
+    private boolean sawPush;
     private final Runnable timeoutTask = new Runnable() {
         @Override
         public void run() {
@@ -50,6 +59,7 @@ final class GwmPresenceProbe implements ServiceConnection {
     GwmPresenceProbe(Context context, Callback callback) {
         this.context = context.getApplicationContext();
         this.callback = callback;
+        this.dataListener = new ReadOnlyDataListener(handler, this);
     }
 
     void start() {
@@ -66,42 +76,94 @@ final class GwmPresenceProbe implements ServiceConnection {
             finish();
             return;
         }
-        handler.postDelayed(timeoutTask, TIMEOUT_MS);
+        handler.postDelayed(timeoutTask, LISTEN_WINDOW_MS);
     }
 
     @Override
-    public void onServiceConnected(ComponentName name, IBinder service) {
-        boolean alive = false;
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
-        try {
-            data.writeInterfaceToken(SERVICE_DESCRIPTOR);
-            data.writeInt(1);
-            data.writeString(context.getPackageName());
-            data.writeStringArray(PING_IDS);
-            data.writeStringArray(null);
-            data.writeInt(1);
-            if (service.transact(TRANSACTION_GET_DATA, data, reply, 0)) {
-                reply.readException();
-                String[] response = reply.createStringArray();
-                alive = response != null && response.length > 0;
-            }
-        } catch (Throwable error) {
-            Log.w(TAG, "GWM ping failed", error);
-        } finally {
-            data.recycle();
-            reply.recycle();
+    public void onServiceConnected(ComponentName name, IBinder binder) {
+        service = binder;
+        listenerRegistered = registerListener();
+        if (!listenerRegistered) {
+            Log.w(TAG, "GWM ping listener register failed");
+            finish();
+            return;
         }
-        if (alive && !finished) {
-            Log.i(TAG, "GWM ping ok — vehicle link alive");
-            callback.onVehicleAlive();
-        }
-        finish();
+        Log.i(TAG, "GWM ping listening for live pushes");
     }
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
+        service = null;
+        listenerRegistered = false;
         finish();
+    }
+
+    @Override
+    public void onDataChanged(String id, String value) {
+        if (finished || id == null) {
+            return;
+        }
+        for (String watchId : WATCH_IDS) {
+            if (watchId.equals(id)) {
+                if (!sawPush) {
+                    sawPush = true;
+                    Log.i(TAG, "GWM ping got live push: " + id);
+                    callback.onVehicleAlive();
+                }
+                finish();
+                return;
+            }
+        }
+    }
+
+    private boolean registerListener() {
+        IBinder current = service;
+        if (current == null) {
+            return false;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(SERVICE_DESCRIPTOR);
+            data.writeString(context.getPackageName());
+            data.writeStringArray(WATCH_IDS);
+            data.writeStrongBinder(dataListener.asBinder());
+            if (!current.transact(TRANSACTION_REGISTER_LISTENER, data, reply, 0)) {
+                return false;
+            }
+            reply.readException();
+            return reply.readInt() != 0;
+        } catch (Throwable error) {
+            Log.w(TAG, "GWM ping register failed", error);
+            return false;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    private void unregisterListener() {
+        IBinder current = service;
+        if (!listenerRegistered || current == null) {
+            listenerRegistered = false;
+            return;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(SERVICE_DESCRIPTOR);
+            data.writeString(context.getPackageName());
+            data.writeStrongBinder(dataListener.asBinder());
+            if (current.transact(TRANSACTION_UNREGISTER_LISTENER, data, reply, 0)) {
+                reply.readException();
+                reply.readInt();
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            listenerRegistered = false;
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     private void finish() {
@@ -110,6 +172,8 @@ final class GwmPresenceProbe implements ServiceConnection {
         }
         finished = true;
         handler.removeCallbacks(timeoutTask);
+        unregisterListener();
+        service = null;
         if (bound) {
             try {
                 context.unbindService(this);
