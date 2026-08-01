@@ -170,6 +170,10 @@ public final class SettingsView extends View {
                 COLOR_TEXT,
                 true);
 
+        float autoTop = updateBottom + UPDATE_GAP;
+        float autoBottom = autoTop + UPDATE_HEIGHT;
+        drawAutostartToggle(canvas, autoTop, autoBottom);
+
         drawCenteredText(
                 canvas,
                 status.length() == 0
@@ -287,7 +291,76 @@ public final class SettingsView extends View {
             listener.onCheckUpdateRequested();
             return true;
         }
+        float autoTop = updateBottom + UPDATE_GAP;
+        float autoBottom = autoTop + UPDATE_HEIGHT;
+        if (x >= 255.0f
+                && x <= 705.0f
+                && y >= autoTop
+                && y <= autoBottom) {
+            boolean enabled = !SkinPreferences.isAutostartEnabled(getContext());
+            SkinPreferences.setAutostartEnabled(getContext(), enabled);
+            status = enabled
+                    ? "Автозапуск включён"
+                    : "Автозапуск выключен — панель сама не поднимется";
+            if (!enabled) {
+                // Drop pending ACC-resume work; manual Save still works.
+                ClusterPowerController.clearSuspendForUserLaunch();
+            }
+            invalidate();
+            return true;
+        }
         return true;
+    }
+
+    private void drawAutostartToggle(Canvas canvas, float top, float bottom) {
+        boolean enabled = SkinPreferences.isAutostartEnabled(getContext());
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(COLOR_CARD_SELECTED);
+        canvas.drawRoundRect(255.0f, top, 705.0f, bottom, 12.0f, 12.0f, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2.0f);
+        paint.setColor(enabled ? COLOR_ACCENT : COLOR_MUTED);
+        canvas.drawRoundRect(255.0f, top, 705.0f, bottom, 12.0f, 12.0f, paint);
+
+        float boxLeft = 280.0f;
+        float boxTop = top + 10.0f;
+        float boxSize = 24.0f;
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2.5f);
+        paint.setColor(enabled ? COLOR_ACCENT : COLOR_MUTED);
+        canvas.drawRoundRect(
+                boxLeft,
+                boxTop,
+                boxLeft + boxSize,
+                boxTop + boxSize,
+                4.0f,
+                4.0f,
+                paint);
+        if (enabled) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(3.0f);
+            paint.setColor(COLOR_ACCENT);
+            canvas.drawLine(
+                    boxLeft + 5.0f,
+                    boxTop + 12.0f,
+                    boxLeft + 10.0f,
+                    boxTop + 18.0f,
+                    paint);
+            canvas.drawLine(
+                    boxLeft + 10.0f,
+                    boxTop + 18.0f,
+                    boxLeft + 19.0f,
+                    boxTop + 6.0f,
+                    paint);
+        }
+        drawLeftText(
+                canvas,
+                enabled ? "Автозапуск панели включён" : "Автозапуск панели выключен",
+                320.0f,
+                top + 29.0f,
+                16.0f,
+                COLOR_TEXT,
+                true);
     }
 
     @Override
@@ -384,7 +457,10 @@ public final class SettingsView extends View {
                 : "Сохранить и запустить на дисплее 2";
     }
 
-    private static String defaultHint(boolean factorySelected) {
+    private String defaultHint(boolean factorySelected) {
+        if (!SkinPreferences.isAutostartEnabled(getContext())) {
+            return "Без автозапуска: панель только после «Сохранить и запустить»";
+        }
         if (factorySelected) {
             return "При автозапуске кастомная панель не будет перекрывать дисплей 2";
         }

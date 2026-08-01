@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 public final class SkinPreferences {
     private static final String PREFERENCES_NAME = "cluster_settings";
     private static final String KEY_SELECTED_SKIN = "selected_skin";
+    private static final String KEY_AUTOSTART = "autostart_enabled";
 
     private SkinPreferences() {
     }
@@ -27,6 +28,19 @@ public final class SkinPreferences {
         context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_SELECTED_SKIN, safeSkin)
+                .apply();
+    }
+
+    /** When false, boot / ACC resume never launches the overlay by themselves. */
+    public static boolean isAutostartEnabled(Context context) {
+        return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_AUTOSTART, true);
+    }
+
+    public static void setAutostartEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_AUTOSTART, enabled)
                 .apply();
     }
 }

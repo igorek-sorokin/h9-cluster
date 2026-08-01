@@ -18,6 +18,18 @@ public final class ClusterLauncher {
     }
 
     public static boolean startOnClusterDisplay(Context context) {
+        return startOnClusterDisplay(context, false);
+    }
+
+    /**
+     * @param userInitiated true when the user pressed Save / left settings;
+     *                      false for boot and ACC auto-resume (respects autostart flag)
+     */
+    public static boolean startOnClusterDisplay(Context context, boolean userInitiated) {
+        if (!userInitiated && !SkinPreferences.isAutostartEnabled(context)) {
+            Log.i(TAG, "Skip launch: autostart disabled");
+            return false;
+        }
         if (!SkinRegistry.overlaysCluster(SkinPreferences.getSelectedSkin(context))) {
             return releaseClusterDisplay(context);
         }

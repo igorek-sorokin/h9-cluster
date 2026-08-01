@@ -67,7 +67,8 @@ public final class SettingsActivity extends Activity {
                         ClusterPowerController.clearSuspendForUserLaunch();
                         boolean launched =
                                 ClusterLauncher.startOnClusterDisplay(
-                                        SettingsActivity.this);
+                                        SettingsActivity.this,
+                                        true);
                         settingsView.showSaveResult(launched);
                     }
 
@@ -180,7 +181,7 @@ public final class SettingsActivity extends Activity {
     private void restorePersistedPreview() {
         if (unsavedPreviewActive) {
             unsavedPreviewActive = false;
-            ClusterLauncher.startOnClusterDisplay(this);
+            ClusterLauncher.startOnClusterDisplay(this, true);
         }
     }
 }

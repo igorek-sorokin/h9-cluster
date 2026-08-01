@@ -134,7 +134,8 @@ final class ClusterPowerController {
                 resumePingsArmed = false;
                 return;
             }
-            if (!SkinRegistry.overlaysCluster(
+            if (!SkinPreferences.isAutostartEnabled(appContext)
+                    || !SkinRegistry.overlaysCluster(
                     SkinPreferences.getSelectedSkin(appContext))) {
                 resumePingsArmed = false;
                 return;
@@ -285,7 +286,8 @@ final class ClusterPowerController {
         if (BuildConfig.DEMO_MODE) {
             return;
         }
-        if (!SkinRegistry.overlaysCluster(
+        if (!SkinPreferences.isAutostartEnabled(appContext)
+                || !SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
             stopResumePings();
             return;
@@ -311,7 +313,8 @@ final class ClusterPowerController {
     }
 
     private void clearSuspendAndStart(String reason) {
-        if (!SkinRegistry.overlaysCluster(
+        if (!SkinPreferences.isAutostartEnabled(appContext)
+                || !SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
             suspendedByPower = false;
             stopResumePings();
