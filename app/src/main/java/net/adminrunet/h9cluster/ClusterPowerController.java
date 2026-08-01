@@ -2,9 +2,7 @@ package net.adminrunet.h9cluster;
 
 import net.adminrunet.h9cluster.skins.SkinRegistry;
 
-import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -20,17 +18,18 @@ import android.util.Log;
 import android.view.Display;
 
 /**
- * Removes the custom cluster overlay when the vehicle powers down and leaves the
- * stock cluster visible (same outcome as choosing the Factory theme).
+ * Removes the custom cluster overlay when the vehicle powers down and restores
+ * the last selected theme when the vehicle wakes again.
  *
- * <p>Haval often blanks the HU without {@code SCREEN_OFF}. When GWM telemetry
- * stops updating, this controller treats that as ACC/ignition off.</p>
+ * <p>Haval often blanks the HU without {@code SCREEN_OFF}. Overlay close is driven
+ * by GWM telemetry going stale; wake is detected by a background GWM probe that
+ * sees data again after ACC/ignition returns.</p>
  */
 final class ClusterPowerController {
     private static final String TAG = "H9ClusterPower";
-    private static final int MAX_ATTEMPTS = 6;
+    private static final int MAX_ATTEMPTS = 8;
     private static final long RETRY_DELAY_MS = 1500L;
-    private static final long START_DEBOUNCE_MS = 1000L;
+    private static final long START_DEBOUNCE_MS = 800L;
     private static final long POLL_INTERVAL_MS = 1000L;
 
     private static final String[] EXTRA_OFF_ACTIONS = {
@@ -122,9 +121,9 @@ final class ClusterPowerController {
 
     private Runnable pendingStart;
     private Runnable startAttempts;
-    private Boolean lastReleaseDecision;
     private boolean suspendedByPower;
     private boolean registered;
+    private ClusterDataSource resumeProbe;
 
     ClusterPowerController(Context context) {
         this.appContext = context.getApplicationContext();
@@ -139,7 +138,7 @@ final class ClusterPowerController {
         ClusterPowerController controller = instance;
         if (controller != null) {
             controller.suspendedByPower = false;
-            controller.lastReleaseDecision = null;
+            controller.stopResumeProbe();
         }
     }
 
@@ -182,7 +181,11 @@ final class ClusterPowerController {
         boolean interactive = powerManager == null || powerManager.isInteractive();
         int brightness = readBrightness();
         int hostState = readDisplayState(Display.DEFAULT_DISPLAY);
+        // Telemetry stale only matters while the overlay is live. After suspend the
+        // tracker is reset and a background GWM probe watches for wake.
         boolean telemetryStale = !BuildConfig.DEMO_MODE
+                && !suspendedByPower
+                && PreviewActivity.isShowing()
                 && VehicleAwakeTracker.get().isStale(now);
         long telemetryAge = VehicleAwakeTracker.get().lastTelemetryAgeMs(now);
 
@@ -209,46 +212,80 @@ final class ClusterPowerController {
                 + release);
 
         if (release) {
-            lastReleaseDecision = true;
             releaseToFactory(reason);
             return;
         }
 
-        boolean hostAwake = interactive
-                && ClusterDisplayPowerPolicy.shouldStartCluster(hostState)
-                && !ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness);
-
         if (suspendedByPower) {
-            if (hostAwake) {
-                lastReleaseDecision = false;
-                clearSuspendAndStart("host-awake:" + reason);
-            }
-            return;
-        }
-
-        if (lastReleaseDecision != null && !lastReleaseDecision) {
-            return;
-        }
-        lastReleaseDecision = false;
-        if (hostAwake) {
-            scheduleClusterStart(reason);
+            ensureResumeProbe();
         }
     }
 
     private void releaseToFactory(String reason) {
         cancelPendingWork();
+        boolean alreadySuspended = suspendedByPower;
         suspendedByPower = true;
         Log.i(TAG, "Switching to factory cluster (" + reason + ")");
         PreviewActivity.forceRemoveOverlay(appContext);
+        VehicleAwakeTracker.get().reset();
+        if (!BuildConfig.DEMO_MODE) {
+            ensureResumeProbe();
+        }
+        if (!alreadySuspended) {
+            Log.i(TAG, "Waiting for GWM telemetry to restore last theme");
+        }
+    }
+
+    private void ensureResumeProbe() {
+        if (BuildConfig.DEMO_MODE || resumeProbe != null) {
+            return;
+        }
+        if (!SkinRegistry.overlaysCluster(
+                SkinPreferences.getSelectedSkin(appContext))) {
+            return;
+        }
+        Log.i(TAG, "Starting background GWM resume probe");
+        resumeProbe = new GwmClusterDataSource(appContext);
+        resumeProbe.start(new ClusterDataSource.Listener() {
+            @Override
+            public void onClusterState(ClusterState state) {
+                VehicleAwakeTracker.get().onTelemetry();
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!suspendedByPower) {
+                            stopResumeProbe();
+                            return;
+                        }
+                        Log.i(TAG, "GWM telemetry resumed — restoring cluster theme");
+                        clearSuspendAndStart("gwm-telemetry-resumed");
+                    }
+                });
+            }
+        });
+    }
+
+    private void stopResumeProbe() {
+        if (resumeProbe == null) {
+            return;
+        }
+        try {
+            resumeProbe.stop();
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Resume probe stop failed", error);
+        }
+        resumeProbe = null;
     }
 
     private void clearSuspendAndStart(String reason) {
         if (!SkinRegistry.overlaysCluster(
                 SkinPreferences.getSelectedSkin(appContext))) {
             suspendedByPower = false;
+            stopResumeProbe();
             return;
         }
         suspendedByPower = false;
+        stopResumeProbe();
         scheduleClusterStart(reason);
     }
 
@@ -297,16 +334,12 @@ final class ClusterPowerController {
     }
 
     private boolean shouldReleaseNow() {
-        long now = SystemClock.elapsedRealtime();
         boolean interactive = powerManager == null || powerManager.isInteractive();
         int brightness = readBrightness();
         int hostState = readDisplayState(Display.DEFAULT_DISPLAY);
-        boolean telemetryStale = !BuildConfig.DEMO_MODE
-                && VehicleAwakeTracker.get().isStale(now);
         return ClusterDisplayPowerPolicy.shouldReleaseForInteractive(interactive)
                 || ClusterDisplayPowerPolicy.shouldReleaseCluster(hostState)
-                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness)
-                || telemetryStale;
+                || ClusterDisplayPowerPolicy.shouldReleaseForBrightness(brightness);
     }
 
     private void cancelPendingWork() {
